@@ -1,6 +1,6 @@
 # Advanced Multivariate Analysis
 
-This repository contains materials from the **Advanced Multivariate Analysis** course, covering various statistical and machine learning techniques for analyzing complex datasets. The focus is on **non-parametric methods, clustering, dimensionality reduction, and interpretable machine learning**.
+This repository contains homework materials from the **Advanced Multivariate Analysis** course, covering various statistical and machine learning techniques for analyzing complex datasets. The focus is on **non-parametric methods, clustering, dimensionality reduction, and interpretable machine learning**.
 
 his repository contains materials from the **Advanced Multivariate Analysis** course, covering various statistical and machine learning techniques for analyzing complex datasets. The focus is on **non-parametric methods, clustering, dimensionality reduction, and interpretable machine learning**.
 
