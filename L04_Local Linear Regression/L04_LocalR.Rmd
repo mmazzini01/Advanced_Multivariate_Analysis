@@ -1,0 +1,236 @@
+---
+title: "Estimating the conditional variance by local linear regression"
+author: "Adrià Casanova, Silvia Ferrer, Matteo Mazzini"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load libraries, message=F}
+library(sm)
+library(latex2exp)
+```
+
+# Aircraft Data
+
+```{r load data}
+data(aircraft)
+#help(aircraft)
+attach(aircraft)
+lgPower <- log(Power)
+lgSpan <- log(Span)
+lgLength <- log(Length)
+lgWeight <- log(Weight)
+lgSpeed <- log(Speed)
+lgRange <- log(Range)
+```
+
+# Estimating the conditional variance
+
+## Using loc.pol.reg to fit nonparametric regressions
+
+```{r function definitions}
+source("locpolreg.R")
+
+h.cv.gcv <- function(x,y,h.v = exp(seq(log(diff(range(x))/20),
+                                       log(diff(range(x))/4),l=10)), 
+                     p=1,type.kernel="normal"){
+  n <- length(x)
+  cv <- h.v*0
+  gcv <- h.v*0
+  for (i in (1:length(h.v))){
+    h <- h.v[i]
+    aux <- locpolreg(x=x,y=y,h=h,p=p,tg=x,
+                     type.kernel=type.kernel, doing.plot=FALSE)
+    S <- aux$S
+    h.y <- aux$mtgr
+    hii <- diag(S)
+    av.hii <- mean(hii)
+    cv[i] <- sum(((y-h.y)/(1-hii))^2)/n
+    gcv[i] <- sum(((y-h.y)/(1-av.hii))^2)/n
+  }
+  return(list(h.v=h.v,cv=cv,gcv=gcv))
+}
+```
+
+We first fit a nonparametric regression to lgWeight against Yr.
+
+```{r choose bandwidth for m}
+y <- lgWeight
+x <- Yr
+m.h.cv.gcv <- h.cv.gcv(x,y)
+m.h.min.cv <- m.h.cv.gcv$h.v[which.min(m.h.cv.gcv$cv)]
+m.h.min.gcv <- m.h.cv.gcv$h.v[which.min(m.h.cv.gcv$gcv)]
+m.h.min.cv; m.h.min.gcv; m.h.min.cv == m.h.min.gcv
+```
+
+By LOOCV and by Generalized LOOCV we obtain the same best bandwidth to estimate m(x).
+
+```{r estimate m, fig.show = "hide"}
+m.1 <- locpolreg(x, y, h=m.h.min.cv)$mtgr
+```
+
+Now, with the errors ($\epsilon$) of the previous regression, we are able to fit a nonparametric regression to $log(\epsilon^2)$ given Yr to estimate $log(\sigma^2(x))$, where $\sigma^2(x)$ is an estimate of the conditional variance of lgWeight given Yr.
+
+```{r choose bandwidth for q}
+e.1 <- y - m.1
+z.1 <- log(e.1^2)
+q.h.cv.gcv <- h.cv.gcv(x,z.1)
+q.h.min.cv <- q.h.cv.gcv$h.v[which.min(q.h.cv.gcv$cv)]
+q.h.min.gcv <- q.h.cv.gcv$h.v[which.min(q.h.cv.gcv$gcv)]
+q.h.min.cv; q.h.min.gcv; q.h.min.cv == q.h.min.gcv
+```
+
+LOOCV and Generalized LOOCV disagree on the best bandwith to estimate q, so we will use both results and decide the best one visually.
+
+## Comparing bandwidth results of using LOOCV and Generalized LOOCV to estimate q
+
+```{r estimate q.cv, fig.show = "hide"}
+par(mfrow = c(1, 2))
+q.cv <- locpolreg(x, z.1, h=q.h.min.cv, main = "LOOCV q_hat")$mtgr
+q.gcv <- locpolreg(x, z.1, h=q.h.min.gcv, main = "GLOOCV q_hat")$mtgr
+```
+
+```{r estimate and plot sigma^2 with cv, fig.width=10}
+s2.cv <- exp(q.cv)
+s2.gcv <- exp(q.gcv)
+par(mfrow = c(1, 2))
+plot(e.1^2 ~ x, main = "Conditional variance of lgWeight\ngiven Yr according to LOOCV", xlab = "Yr", ylab = "lgWeight")
+lines(s2.cv ~ x, col = "red", lw = 5)
+legend("topleft", c(TeX("\\epsilon^2_i"), TeX("\\hat{\\sigma}^2(x)")), col = c("black", "red"), lwd = c(1, 5))
+plot(e.1^2 ~ x, main = "Conditional variance of lgWeight\ngiven Yr according to GLOOCV", xlab = "Yr", ylab = "lgWeight")
+lines(s2.gcv ~ x, col = "red", lw = 5)
+legend("topleft", c(TeX("\\epsilon^2_i"), TeX("\\hat{\\sigma}^2(x)")), col = c("black", "red"), lwd = c(1, 5))
+```
+
+```{r plot m with cv, fig.width=10}
+s.cv <- sqrt(s2.cv)
+s.gcv <- sqrt(s2.gcv)
+par(mfrow = c(1, 2))
+plot(m.1 ~ x,
+  main = "Nonparametric regression\naccording to LOOCV", xlab = "Yr",
+  ylab = "lgWeight", ylim=c(6,12)
+)
+lines(m.1 + 1.96 * s.cv ~ x, col="red", lty=2)
+lines(m.1 - 1.96 * s.cv ~ x, col="red", lty=2)
+legend("topleft", c(TeX("\\hat{m}(x) + 1.96\\hat{\\sigma}(x)"), TeX("\\hat{m}(x)"), TeX("\\hat{m}(x) - 1.96\\hat{\\sigma}(x)")), col = c("red", "black", "red"), lty=c(2,1,2),cex = 0.6)
+plot(m.1 ~ x,
+  main = "Nonparametric regression\naccording to GLOOCV", xlab = "Yr",
+  ylab = "lgWeight", ylim=c(6,12)
+)
+lines(m.1 + 1.96 * s.gcv ~ x, col="red", lty=2)
+lines(m.1 - 1.96 * s.gcv ~ x, col="red", lty=2)
+legend("topleft", c(TeX("\\hat{m}(x) + 1.96\\hat{\\sigma}(x)"), TeX("\\hat{m}(x)"), TeX("\\hat{m}(x) - 1.96\\hat{\\sigma}(x)")), col = c("red", "black", "red"), lty=c(2,1,2),cex = 0.6)
+```
+
+Results are almost identical for both proposals of the bandwidth. We dedicide to keep the standard LOOCV as referential method
+
+On the other hand, the estimation of the conditional variance fits visually the majority of the data, although there is a lot of dispersion in the errors between years 45 and 80 caused by many outliers. This makes the variance increase during those years as well.
+
+The regression of lgWeight given Yr shows an irregular increase between years 10 and 40 of the maximum take-off weight of airplanes. Between years 40 and 50, lgWeight grows slowlier with a larger variance. Then, between the 50s and the 80s there is a slow decrease with a very large variance. Finally, in the last ten years, a significantly large growth happens.
+
+To conclude, the modelled condicional variance is not constant, which validates the decision of using and heteroscedastic regression model.
+
+## Using sm.regression to fit nonparametric regressions
+
+```{r load sm libraries}
+library(sm)
+library(KernSmooth)
+```
+
+We first select the $h$ value using the direct plug-in method. Then we use it to fit a local nonparametric regression of lgWeight given Yr.
+
+```{r choose bandwidth for m.2 dpill, fig.show = "hide"}
+h.dpill <- dpill(x,y,gridsize=101,
+                 range.x=range(x))
+paste0("Bandwidth value using plug-in method: ",h.dpill)
+m.2<- sm.regression(x,y,h= h.dpill,eval.points = x)$estimate
+```
+
+Now, with the errors ($\epsilon$) of the previous regression, we are able to fit a nonparametric regression to $log(\epsilon^2)$ given Yr to estimate $log(\sigma^2(x))$, where $\sigma^2(x)$ is an estimate of the conditional variance of lgWeight given Yr.
+
+```{r choose bandwidth for q dpill, fig.show = "hide"}
+e.2 <- y - m.2
+z.2 <- log(e.2^2)
+q.h.dpill <- dpill(x,z.2,gridsize=101,
+                 range.x=range(x))
+paste0("Bandwidth value using plug-in method for q: ",q.h.dpill)
+q.dpill<- sm.regression(x,z.2,h= q.h.dpill, eval.points= x)$estimate
+```
+
+```{r estimate and plot sigma^2 with dpill}
+s2.dpill <- exp(q.dpill)
+
+plot(e.2^2 ~ x, main = "Conditional variance of lgWeight given Yr according to direct plug-in", xlab = "Yr", ylab = "lgWeight")
+lines(s2.dpill ~ x, col = "red", lw = 5)
+legend("topleft", c(TeX("\\epsilon^2_i"), TeX("\\hat{\\sigma}^2(x)")), col = c("black", "red"), lwd = c(1, 5))
+```
+
+```{r plot m with dpill}
+s.dpill <- sqrt(s2.dpill)
+plot(m.2 ~ x,
+  main = "Nonparametric regression of lgWeight\ngiven Yr according to direct plug-in", xlab = "Yr",
+  ylab = "lgWeight", ylim=c(6,12)
+)
+lines(m.2 + 1.96 * s.dpill ~ x, col="red", lty=2)
+lines(m.2 - 1.96 * s.dpill ~ x, col="red", lty=2)
+legend("topleft", c(TeX("\\hat{m}(x) + 1.96\\hat{\\sigma}(x)"), TeX("\\hat{m}(x)"), TeX("\\hat{m}(x) - 1.96\\hat{\\sigma}(x)")), col = c("red", "black", "red"), lty=c(2,1,2))
+```
+
+The increase in lgWeight appears smoother compared to the previous model. The variance remains relatively stable until until the 50s, where the model captures a slight decrease and an increase in variance. Toward the final years, a slightly growth in lgWeight is observed.
+Again, the modelled conditional variance is not constant, which validates the decision of using and heteroscedastic regression model as before.
+
+## Comparison between LOOCV and direct plug-in method for choosing the bandwidth
+
+```{r LOOCV vs direct plug-in plots, fig.width=10}
+par(mfrow = c(1, 2))
+paste0("h for m_hat using LOOCV: ",m.h.min.cv)
+paste0("h for m_hat using direct plug-in: ",h.dpill)
+paste0("h for q_hat using LOOCV: ",q.h.min.cv)
+paste0("h for q_hat using direct plug-in: ",q.h.dpill)
+plot(m.1 ~ x,
+  main = "Nonparametric regression\n according to LOOCV", xlab = "Yr",
+  ylab = "lgWeight", ylim=c(6,12)
+)
+lines(m.1 + 1.96 * s.cv ~ x, col="red", lty=2)
+lines(m.1 - 1.96 * s.cv ~ x, col="red", lty=2)
+legend("topleft", c(TeX("\\hat{m}(x) + 1.96\\hat{\\sigma}(x)"), TeX("\\hat{m}(x)"), TeX("\\hat{m}(x) - 1.96\\hat{\\sigma}(x)")), col = c("red", "black", "red"), lty=c(2,1,2),cex = 0.6)
+plot(m.2 ~ x,
+  main = "Nonparametric regression\naccording to direct plug-in", xlab = "Yr",
+  ylab = "lgWeight", ylim=c(6,12)
+)
+lines(m.2 + 1.96 * s.dpill ~ x, col="red", lty=2)
+lines(m.2 - 1.96 * s.dpill ~ x, col="red", lty=2)
+legend("topleft", c(TeX("\\hat{m}(x) + 1.96\\hat{\\sigma}(x)"), TeX("\\hat{m}(x)"), TeX("\\hat{m}(x) - 1.96\\hat{\\sigma}(x)")), col = c("red", "black", "red"), lty=c(2,1,2),cex = 0.6)
+
+
+plot(m.1 ~ x,
+  main = "Nonparametric regression\n according to LOOCV", xlab = "Yr",
+  ylab = "lgWeight", ylim=c(6,12)
+)
+lines(m.1 ~ x, col = "blue",lw = 4)
+points(x, y, col = rgb(0, 0, 0, alpha = 0.25), pch = 16,cex = 0.7)
+lines(m.1 + 1.96 * s.cv ~ x, col="red", lty=2,lw = 3)
+lines(m.1 - 1.96 * s.cv ~ x, col="red", lty=2,lw = 3)
+legend("topleft", c(TeX("\\hat{m}(x) + 1.96\\hat{\\sigma}(x)"), TeX("\\hat{m}(x)"), TeX("\\hat{m}(x) - 1.96\\hat{\\sigma}(x)")), col = c("red", "blue", "red"), lty=c(2,1,2),cex = 0.6)
+plot(m.2 ~ x,
+  main = "Nonparametric regression\naccording to direct plug-in", xlab = "Yr",
+  ylab = "lgWeight", ylim=c(6,12)
+)
+lines(m.2 ~ x, col = "blue",lw = 4)
+points(x, y, col = rgb(0, 0, 0, alpha = 0.25), pch = 16,cex = 0.7)
+lines(m.2 + 1.96 * s.dpill ~ x, col="red", lty=2,lw = 3)
+lines(m.2 - 1.96 * s.dpill ~ x, col="red", lty=2,lw = 3)
+legend("topleft", c(TeX("\\hat{m}(x) + 1.96\\hat{\\sigma}(x)"), TeX("\\hat{m}(x)"), TeX("\\hat{m}(x) - 1.96\\hat{\\sigma}(x)")), col = c("red", "blue", "red"), lty=c(2,1,2),cex = 0.6)
+
+```
+
+From the results, we observe that LOOCV tends to select a smaller bandwidth for the estimation of $m(x)$, while the direct plug-in method chooses a larger bandwidth. The smaller bandwidth selected by LOOCV allows the estimate of $m(x)$ to follow the data more closely, capturing local patterns, whereas the larger bandwidth chosen by the Plug-In method results in a smoother estimate that may underfit the data.
+
+Conversely, for the estimation of $q(x)$, LOOCV selects a larger bandwidth, while the direct plug-in method opts for a smaller one. This suggests that the direct plug-in method is more sensitive to noise in the variance, while LOOCV smooths out the variance, focusing on broader trends.
+
+In a real case scenario, we would ask the data owners, who have field expertise, what would be more convenient to estimate lgWeight given Yr: a flatter variance as in the LOOCV case or a flatter $m(x)$ as when using direct plug-in. This way we would make sure to take the best possible decision.
+

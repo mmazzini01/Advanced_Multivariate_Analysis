@@ -1,0 +1,404 @@
+---
+title: "Density estimation: GMM. DBSCAN"
+author: "Adrià Casanova, Silvia Ferrer, Matteo Mazzini"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(latex2exp)
+```
+
+In particular we are interested in the joint distribution of temp and casual for year 2012:
+```{r}
+load("BikeDay.Rdata")
+X <- as.matrix(day[day$yr==1,c(10,14)])
+#pairs(X)
+```
+
+# Questions
+
+## 1. Gaussian Mixture Model clustering (GMM)
+
+We assume the data to follow a Gaussian Mixture Model. Allowing varying volume, shape, and orientation for different components in the mixture we are looking for the best number of clusters $k\in\{2,\dots,6\}$ according to BIC.
+
+```{r}
+library(mclust)
+gmm <- Mclust(X, G=2:6, modelNames="VVV") 
+# "VVV" for varying volume, shape, and orientation
+kBIC <- gmm$G   # best number of clusters
+cat('We are using', kBIC, 'clusters for the following GMM plots\n')
+plot(gmm, what = "BIC")
+title("GMM BIC")
+plot(gmm, what = "classification")
+title("GMM Classification")
+plot(gmm, what = "uncertainty")
+title("GMM Uncertainty")
+plot(gmm, what = "density")
+title("GMM Density")
+```
+
+## 2. Kernel Estimator
+
+We are now going to estimate the clustering with a kernel estimator, and compare the GMM density with the kernel estimator density. Using the bandwidth formula: \[h = a \cdot (\text{StdDev(temp)}, \text{StdDev(casual)})\] where \( a = 0.25 \).
+
+```{r}
+library(sm)
+
+# standard deviations of temp and casual
+sd_temp <- sd(X[, 1])
+sd_casual <- sd(X[, 2])
+
+bw <- 0.25 * c(sd_temp, sd_casual)
+
+par(mfrow = c(1, 2))  # 1 row, 2 columns
+
+# GMM density plot
+plot(gmm, what = "density")
+title("GMM Density Estimation")
+
+# kernel density estimation
+sm.density(X, h = bw, display = "slice")
+title("Kernel Density Estimation")
+
+```
+
+### Plots comparison
+Using k=3, as it's the best number of clusters, we obtain these two graphs representing the density estimation of casual and temp variables against the target.
+
+In the GMM plot, we observe two distinct regions of density concentration, an upper cluster and two lower clusters that are close to each other.
+There's a clear separation between the upper cluster and the other two, which suggests distinct behavioral patterns or regimes in the data, for example different seasons or demand patterns.
+
+In the Kernel plot, the clusters are also visible here, corresponding to high casual rentals at high temperatures and another with a mid-range temperatures, and lower casuals rentals across low temperatures.
+The contours are smoother, indicating more gradual changes in the density compared to the GMM, where the separation between clusters is sharper.
+
+
+## 3. Kernel Density for each cluster
+
+We are now going to use the kernel estimator method implemented in the previous exercise, and represent the estimated bivariate density using the level curve that covers the 75% of the points in each cluster.
+
+```{r}
+# par(mfrow = c(1, 1))
+
+# extract clusters from the GMM model - only kbic first clusters classified with bic criteria
+clusters <- gmm$classification
+
+plot(X[,"temp"], X[,"casual"], col=clusters,
+     xlab="temp", ylab="casual")
+
+# Loop over each cluster and estimate the kernel density
+for (k in 1:kBIC) {
+
+  cluster_data <- X[clusters == k, ]
+  
+  # standard deviations
+  sd_temp_cluster <- sd(cluster_data[, 1])
+  sd_casual_cluster <- sd(cluster_data[, 2])
+  
+  bw_cluster <- 0.4 * c(sd_temp_cluster, sd_casual_cluster)
+  
+  # kernel density estimation
+  sm.density(cluster_data, h = bw_cluster, display="slice", props=c(75), col=k, cex=4, add=TRUE)
+}
+title("Kernel Density Estimation For Each GMM Cluster")
+```
+
+For the black cluster, the density is concentrated in a small range, meaning casual rentals remain low across cold temperatures.
+For the red cluster, density is spread across a larger range of temperatures, but the rental count is moderate, likely due to mixed conditions.
+The green cluster shows a higher density of rentals at higher temperatures, reinforcing the relationship between warmer temperatures and increased casual bike usage.
+
+
+
+## 4. Merge components
+
+In this exercise we will try to merge some of the components discovered by GMM
+with fpc::mergenormals.
+
+```{r}
+library(fpc)
+# merge clusters from the GMM model
+merged_gmm <- mergenormals(xdata = X
+                           , clustering = gmm$classification
+                           , probs = gmm$parameters$pro
+                           , muarray = gmm$parameters$mean
+                           , Sigmaarray = gmm$parameters$variance$sigma
+                           , z = gmm$z
+                           , method = "bhat")
+summary(merged_gmm)
+print("Clusters 1 and 2 have merged. Hence, the number of clusters now is k* = 2.")
+
+k_star <- length(merged_gmm$clusternumbers)
+merged_clusters <- merged_gmm$clustering
+par(mfrow=c(1,1))
+plot(X[,"temp"], X[,"casual"], col=merged_clusters,
+     xlab="temp", ylab="casual")
+title("mergenormals Classification")
+```
+
+From the plot we can see that fpc::mergenormals merged the first to clusters that were very closed to each others, therefore the number k of clusters has been reduced to 2.
+
+## 5. Kernel Density for each cluster after having merged
+
+Now we will repeat exercise 3 with the merged clusters, so that we can see the
+differences between the original clustering and the current one.
+
+```{r}
+# par(mfrow = c(1, 1))
+
+# extract clusters from the GMM model - only kbic first clusters classified with bic criteria
+plot(X[,"temp"], X[,"casual"], col=merged_clusters,
+     xlab="temp", ylab="casual")
+
+# Loop over each cluster and estimate the kernel density
+for (k in 1:k_star) {
+
+  cluster_data <- X[merged_clusters == k, ]
+  
+  # standard deviations
+  sd_temp_cluster <- sd(cluster_data[, 1])
+  sd_casual_cluster <- sd(cluster_data[, 2])
+  
+  bw_cluster <- 0.4 * c(sd_temp_cluster, sd_casual_cluster)
+  
+  # kernel density estimation
+  sm.density(cluster_data, h = bw_cluster, display="slice", props=c(75), col=k, cex=4, add=TRUE)
+  title("Kernel Density Estimation For Each mergenormals Cluster")
+}
+```
+
+The black cluster is characterized by higher density and lower variability, with a concentration of data over a relatively narrow range of "casual" values but a slightly wider range of temperature. In contrast, the red cluster shows lower density but greater variability, with data covering a wider range of "casual" values. 
+
+## 6. DBSCAN
+
+Finally we will perform DBSCAN on the dataset.
+
+```{r}
+library(dbscan)
+Xs <- scale(X)
+
+# plot the results of all combinations of parameters to choose the best one visually
+epsilon_list <- c(0.25, 0.5)
+minPts_list <- c(10, 15, 20)
+
+par(mfrow = c(length(epsilon_list), length(minPts_list)), oma = c(0, 0, 2, 0))
+
+for (epsilon in epsilon_list) {
+  for (minPts in minPts_list) {
+    dbscan.ds <- dbscan(Xs,eps = epsilon, minPts = minPts)
+    plot(Xs, col=dbscan.ds$cluster+1, pch=dbscan.ds$cluster+1, 
+         main=paste("epsilon =",epsilon,", minPts =",minPts),
+         xlab="x",ylab="y",asp=1)
+  }
+}
+mtext("DBSCAN Classification", outer = TRUE, cex = 1.5)
+# best combination: epsilon = 0.5, minPts = 10
+
+# cross table between the clustering of the best combination and
+#   the clustering of fpc::mergenormals
+dbscan.ds_best <- dbscan(Xs,eps = 0.5, minPts = 10)
+table(merged_clusters, dbscan.ds_best$cluster)
+
+```
+
+
+Looking at the previous plots, we can see that three clusters are discerned
+when $\epsilon = 0.25$ and $minPts \in \{15, 20\}$. However, these classifications
+are very noisy. On the other hand, when $(\epsilon, minPts) \in \{(0.25, 10), (0.5, 20)\}$, only one cluster is discovered. This is not optimal because all the points outside the single cluster are noise.
+
+Hence, the reasonable combinations of the tuning parameters are $\epsilon = 0.5, minPts \in \{10, 15\}$. Specifically, the least amount of noise is found when $minPts = 10$, making the best combination of parameters $\epsilon = 0.5, minPts = 10$.
+
+The cross table between the DBSCAN clustering with $\epsilon = 0.5, minPts = 10$ and the clustering of fpc::mergenormals shows that both classifications are very similar.
+The only differences are 7 noise points found by DBSCAN and 3 points classified in cluster 2 by fpc::mergenormals, but assigned to cluster 1 by DBSCAN.
+
+```{r,echo=FALSE}
+library(ggplot2)
+data_plot <- data.frame(Xs, 
+                        GMM_Cluster = factor(merged_clusters), 
+                        DBSCAN_Cluster = factor(ifelse(dbscan.ds_best$cluster == 0, "Noise", dbscan.ds_best$cluster)))
+
+
+ggplot(data_plot, aes(x = X[, 1], y = X[, 2], color = GMM_Cluster, shape = DBSCAN_Cluster)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Clustering GMM vs DBSCAN", 
+       x = "temp", 
+       y = "casual", 
+       color = "GMM Cluster", 
+       shape = "DBSCAN Cluster")  +
+  scale_color_manual(values = c("red", "blue")) +
+  theme(panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank(),  
+        plot.title = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "white"))
+```
+
+### Clustering Analysis Using Silhouette Measures
+To determine the most effective clustering method, we will examine the average silhouette width for both approaches.
+```{r}
+library(cluster)
+gmm_silhouette <- silhouette(merged_clusters, dist(X))
+dbscan_clusters <- dbscan.ds_best$cluster
+dbscan_silhouette <- silhouette(dbscan_clusters[dbscan_clusters > 0], dist(X[dbscan_clusters > 0, ]))
+avg_silhouette_gmm <- round(mean(gmm_silhouette[, 3]),2)
+cat("Avg silhouette width GMM:", avg_silhouette_gmm, "\n")
+avg_silhouette_dbscan <- round(mean(dbscan_silhouette[, 3]),2)
+cat("Avg silhouette width DBSCAN:", avg_silhouette_dbscan, "\n")
+```  
+
+Our findings indicate that the average silhouette width for the DBSCAN clustering is slightly higher than that of the `mergenormals` method. Consequently, we will proceed with DBSCAN as our preferred clustering technique.
+
+## 7. Interpretation
+### DBSCAN
+To gain deeper insights into the underlying patterns within our two clusters, we will further investigate specific variables. By focusing on these key variables, we aim to uncover significant patterns that may exist within the population represented by our clusters. While many variables in our dataset are somewhat redundant (e.g., holiday, weekend, and working day), we will focus our analysis on the following variables that are particularly relevant to our objectives:
+
+- `season`: it is representative also for `mnth`.
+- `workingday`: It includes `holiday` and `weekday`.
+- `weathersit`
+- `temp`
+- `casual`
+- `registered`
+- `cnt`
+
+
+
+```{r}
+#new dataset with a new column refering to the cluster
+x<-day[day$yr==1,]
+x$cluster <- as.factor(dbscan.ds_best$cluster)
+#transform class variables into factors for plotting
+x$workingday <- as.factor(x$workingday)
+x$weathersit <- as.factor(x$weathersit)
+x$season <- as.factor(x$season)
+
+
+library(gridExtra)
+theme <- theme(panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank(),  
+        plot.title = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "white"))
+
+p1 <- ggplot(x, aes(x = cluster, fill = season)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Season Cluster Distributions", x = "Cluster", y = "Count") +
+  theme
+
+
+p2 <- ggplot(x, aes(x = cluster, fill = weathersit)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Weather Condition Cluster Distributions", x = "Cluster", y = "Count") +
+  theme
+
+p3 <- ggplot(x, aes(x = cluster, fill = workingday)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Working Day Cluster Distributions", x = "Cluster", y = "Count") +
+  theme
+p4 <- ggplot(x, aes(x = cluster, y= temp)) +
+  geom_boxplot() +
+  labs(title = "Temperature Cluster Distributions", x = "Cluster", y = "Temp") +
+  theme
+
+grid.arrange(p1, p2, p3,p4, ncol = 2)
+```
+
+From the analysis of the plots, it is evident that Cluster 1 is predominantly composed of users who rent bicycles on working days. This suggests that this cluster is associated with a population that relies on bicycle rentals for daily activities, likely commuting to work. Furthermore, this cluster exhibits a balanced representation across all four seasons, indicating that these users tend to utilize bicycles even under slightly bad weather conditions, including lower temperatures and adverse weather.
+
+Conversely, Cluster 2 is more associated with weekend and holiday rentals, where users predominantly choose to rent bicycles on warmer days, particularly in the summer and autumn. This behavior suggests that the population in this cluster may consist of tourists or occasional users who rent bicycles infrequently.
+
+#### NOTE: Analysis of Cluster Discrepancies
+
+During our cluster analysis, we noticed some discrepancies between the seasonal labels and the data. Specifically, cluster 2 seemed to be related to warmer days and seasons, yet the barplot for the `season` variable showed unexpected results: 'spring' was nearly absent, while 'winter' appeared frequently. This was counterintuitive given the characteristics of the cluster.
+
+Therefore, to investigate further, we examined the barplot for the `mnth` variable.
+```{r}
+x$mnth <- as.factor(x$mnth)
+p5<- ggplot(x, aes(x = cluster, fill = mnth)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Month Distribution Among Clusters", x = "Cluster", y = "Count") +
+  theme
+grid.arrange(p1, p5, ncol = 2)
+
+```
+
+
+Interestingly, in cluster 2, the months 12, 1, and 2 (corresponding to winter) are not represented, which contradicted the  season plot, where winter is significantly present.This could be se bettter also in cluster 0, the one that represented noise. In this cluster the predominant season is summer but it is easy to see that there is no coresponency with the month's plot where spring is dominant and not summer.
+
+This inconsistencies suggests that the `season` variable may have been erroneously labeled.
+
+Upon review, we propose the following corrected season labels:
+
+- **Winter**: 1
+- **Spring**: 2
+- **Summer**: 3
+- **Autumn**: 4
+
+This new labeling is more intuitive and aligns with the data. With this correction, our analysis becomes even more coherent. For example, the corrected labels indicate that cluster 2 has very few bike rentals during winter, which matches our expectations based on the temperature, season data and bike user types.
+
+For reference, we found a similar dataset with correct season labels, which supports our conclusion: [Bikeshare.ob dataset from ISLR2](https://rpkg.net/packages/ISLR2/reference/Bikeshare.ob).
+
+
+Overall, these characteristics imply that Cluster 1 is linked to individuals who frequently use bicycles, possibly having registered for rental subscriptions. In contrast, Cluster 2 is primarily comprised of casual users who require bicycles only under specific circumstances. 
+So we proceed to examinate the proportion of registered users among the two clusters
+
+```{r}
+x$reg_prop <- x$registered/x$cnt
+
+ggplot(x, aes(x = cluster, y= reg_prop)) +
+  geom_boxplot() +
+  labs(title = "Registered Users Proprotion Cluster Distributions", x = "cluster", y = "Reg. Users Proportion") +
+  theme_minimal()
+
+```
+
+As we expected proportion of registered users in Cluster 1 is less remarkable compared to Cluster 2. Therefore to summarize we can say that:
+
+- **Cluster 1** represents regular users, emphasizing consistent bike usage throughout the year.
+- **Cluster 2** signifies casual users, primarily engaging in bike rentals during favorable weather and special occasions.
+
+### Further Analysis of GMM Clusters and Density Estimation
+
+Before applying merging techniques, the Gaussian Mixture Model (GMM) revealed the presence of three distinct clusters. Moreover, doing further analysis using Kernel Density Estimation, we observed a strong density concentration in the region corresponding to the first two clusters.
+
+Given these findings, We would like to conduct an analysis also on this prior model.
+
+```{r}
+library(gridExtra)
+x$cluster <- as.factor(gmm$classification)
+x$reg_prop <- x$registered/x$cnt
+
+p1 <- ggplot(x, aes(x = cluster, fill = season)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Season Cluster Distributions", x = "Cluster", y = "Count") +
+  theme
+
+
+p2 <- ggplot(x, aes(x = cluster, fill = weathersit)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Weather Condition Cluster Distributions", x = "Cluster", y = "Count") +
+  theme
+
+p3 <- ggplot(x, aes(x = cluster, fill = workingday)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Working Day Cluster Distributions", x = "Cluster", y = "Count") +
+  theme
+p4 <- ggplot(x, aes(x = cluster, y= temp)) +
+  geom_boxplot() +
+  labs(title = "Temperature Cluster Distributions", x = "Cluster", y = "Temp") +
+  theme
+p6<- ggplot(x, aes(x = cluster, y= reg_prop)) +
+  geom_boxplot() +
+  labs(title = "Registered Users Proportion Cluster Distributions", x = "cluster", y = "Reg. Users Proportion") +
+  theme_minimal()
+grid.arrange(p1, p2, p3,p4, p6, ncol = 2)
+
+
+
+```
+
+### Cluster Analysis: GMM and DBSCAN Insights
+
+Upon reviewing the clusters identified by prior GMM, it's clear that the third cluster closely resembles the second cluster previously extracted by DBSCAN, while the first and second clusters share similarities with the DBCAN's first group  in terms of bike usage on working days. In GMM, however, Cluster 1 stands out for its higher activity during winter, while Cluster 2 is more active during warmer months.
+
+The lower average temperature in Cluster 1, coupled with a higher bike usage on days with adverse weather, supports the distinction between these groups.
+
+Given the overlap in behavior, DBSCAN’s decision to merge Clusters 1 and 2 seems justified. Both represent consistent bike users who ride throughout the year, with variations based on weather conditions.

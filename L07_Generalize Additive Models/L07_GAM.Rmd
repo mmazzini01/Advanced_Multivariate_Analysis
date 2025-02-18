@@ -1,0 +1,539 @@
+---
+title: "L07_GAM"
+author: "Adrià Casanova, Silvia Ferrer, Matteo Mazzini"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mgcv)
+```
+
+We start with an exploratory data analysis and preprocessing.
+
+```{r}
+hirs <- read.table("hirsutism.dat", header = T, sep = "\t", fill = TRUE)
+
+summary(hirs)
+
+hirs$Treatment <- as.factor(hirs$Treatment)
+
+summary(hirs)
+attach(hirs)
+
+boxplot(hirs[, 2:5])
+
+par(mfrow = c(2, 2))
+boxplot(hirs[, 2] ~ Treatment, ylim = c(0, 30), main = names(hirs)[2], xlab = "Treatment")
+boxplot(hirs[, 3] ~ Treatment, ylim = c(0, 30), main = names(hirs)[3], xlab = "Treatment")
+boxplot(hirs[, 4] ~ Treatment, ylim = c(0, 30), main = names(hirs)[4], xlab = "Treatment")
+boxplot(hirs[, 5] ~ Treatment, ylim = c(0, 30), main = names(hirs)[5], xlab = "Treatment")
+par(mfrow = c(1, 1))
+
+par(mfrow = c(2, 2))
+boxplot(hirs[Treatment == 0, 2:5], ylim = c(0, 30), main = "Treatment 0")
+boxplot(hirs[Treatment == 1, 2:5], ylim = c(0, 30), main = "Treatment 1")
+boxplot(hirs[Treatment == 2, 2:5], ylim = c(0, 30), main = "Treatment 2")
+boxplot(hirs[Treatment == 3, 2:5], ylim = c(0, 30), main = "Treatment 3")
+par(mfrow = c(1, 1))
+
+# Remove observations with missing data
+hirs <- na.omit(hirs)
+
+# Pacient 84 has FGm12 < 0, so we set it 0
+hirs[hirs$FGm12 < 0, "FGm12"] <- 0
+```
+
+The boxplots show that all 4 treatments reduce the hirsutism level as months go by. Treatment 0 (only contraceptive) is the less effective one, while the other three are equally powerful on average, but with different distributions of levels.
+
+We start the modelling of FGm12 by fitting a full linear model. After finding a good lm, we will build a semiparametric GAM based on it. Note that we cannot use variables FGm3 nor FGm6 as predictors.
+
+## Fitting a LM
+
+```{r}
+gam1 <- gam(
+  FGm12 ~ Treatment + FGm0 + SysPres + DiaPres
+    + weight + height,
+  data = hirs
+)
+summary(gam1)
+```
+
+We shall remove non-significant variables.
+
+```{r}
+gam4 <- gam(FGm12 ~ Treatment + FGm0,
+  data = hirs
+)
+summary(gam4)
+```
+
+The model is pretty similar in terms of R-sq.(adj) and Deviance explained.
+The effect of FGm0 might vary with the treatment, so let us add interactions.
+
+```{r}
+gam5 <- gam(FGm12 ~ FGm0 * Treatment,
+  data = hirs
+)
+summary(gam5)
+```
+
+R-sq.(adj) has actually decreased when adding the interaction between FGm0 and Treatment.
+
+We will now compare gam4 and gam5 against all other models with anova. After finding the best model so far, we will smooth more predictive variables.
+
+```{r}
+anova(gam4, gam5, gam1, test = "F")
+anova(gam5, gam4, gam1, test = "F")
+```
+
+We cannot reject the hypothesis that adding interactions does not improve the model.
+
+We decide that the best model is gam4 because it is simpler than gam5.
+
+```{r}
+vis.gam(gam4, plot.type = "persp", theta = 30, phi = 30, type = "response")
+vis.gam(gam4, plot.type = "contour", type = "response", main = "FGm12 predicted with gam4")
+```
+
+Let us analyze the residuals of gam4.
+
+```{r}
+gam.check(gam4)
+```
+
+Residuals seem to be homoscedastic and centered around zero but they seem to be more left tailed than a normal distribution. Moreover the plot of the fitted vs real values shows that the model is not very precise in fitting the data, this could be due to underfitting. Therefore, our linear model seems to be to simple and suffers in catching the structure of the data.
+
+From here, we can add smooth terms to obtain a semiparametric GAM.
+
+## Fitting a semiparametric GAM
+
+We can first try to smooth FGm0.
+
+```{r}
+gam4.1 <- gam(FGm12 ~ Treatment + s(FGm0),
+  data = hirs
+)
+summary(gam4.1)
+```
+
+R-sq.(adj) and Deviance explained increase significantly.
+
+Now we will try to add interactions.
+
+```{r}
+gam4.2 <- gam(FGm12 ~ s(FGm0, by = Treatment),
+  data = hirs
+)
+summary(gam4.2)
+```
+
+R-sq.(adj) and explained Deviance improve slightly even if terms become less significant. Let us compare both models with anova.
+
+```{r}
+anova(gam4, gam4.1, gam4.2, test = "F")
+anova(gam4.1, gam4.2, test = "F")
+```
+
+We cannot reject the hypothesis that adding interactions does not improve the model. However, we will keep them in the following models because intuitively they should be useful. Later, with more terms, we will check again if interactions should be added.
+
+Now we will introduce previously removed variables one by one.
+
+```{r}
+gam4.4 <- gam(FGm12 ~ Treatment + s(FGm0) + s(SysPres),
+  data = hirs
+)
+summary(gam4.4)
+```
+
+s(SysPres) is not significant.
+
+```{r}
+gam4.5 <- gam(FGm12 ~ Treatment + s(FGm0) + s(DiaPres),
+  data = hirs
+)
+summary(gam4.5)
+```
+
+s(DiaPres) is not significant.
+
+```{r}
+gam4.6 <- gam(FGm12 ~ Treatment + s(FGm0) + s(weight),
+  data = hirs
+)
+summary(gam4.6)
+```
+
+s(weight) is not significant.
+
+```{r}
+gam4.7 <- gam(FGm12 ~ Treatment + s(FGm0) + s(height),
+  data = hirs
+)
+summary(gam4.7)
+```
+
+s(height) is not significant.
+
+We will now try tensor splines one by one.
+
+```{r}
+gam4.8 <- gam(FGm12 ~ Treatment + s(FGm0) + te(SysPres, DiaPres),
+  data = hirs
+)
+summary(gam4.8)
+```
+
+Still, not significant. We will try with te(weight, height).
+
+```{r}
+gam4.9 <- gam(FGm12 ~ Treatment + s(FGm0) + te(weight, height),
+  data = hirs
+)
+summary(gam4.9)
+```
+
+Not significant.
+
+Now we will add interactions, one by one.
+
+```{r}
+gam4.4.int <- gam(FGm12 ~ Treatment + s(FGm0) + s(SysPres, by = Treatment),
+  data = hirs
+)
+summary(gam4.4.int)
+```
+
+s(SysPres, by=Treatment) is not significant.
+
+```{r}
+gam4.5.int <- gam(FGm12 ~ Treatment + s(FGm0) + s(DiaPres, by = Treatment),
+  data = hirs
+)
+summary(gam4.5.int)
+```
+
+s(DiaPres, by=Treatment) is not significant.
+
+```{r}
+gam4.6.int <- gam(FGm12 ~ Treatment + s(FGm0) + s(weight, by = Treatment),
+  data = hirs
+)
+summary(gam4.6.int)
+```
+
+s(weight, by=Treatment) is not significant.
+
+```{r}
+gam4.7.int <- gam(FGm12 ~ Treatment + s(FGm0) + s(height, by = Treatment),
+  data = hirs
+)
+summary(gam4.7.int)
+```
+
+s(height, by=Treatment) is not significant.
+
+We will now try tensor splines one by one.
+
+```{r}
+gam4.8.int <- gam(FGm12 ~ Treatment + s(FGm0) + te(SysPres, DiaPres, by = Treatment),
+  data = hirs
+)
+summary(gam4.8.int)
+```
+
+Still, not significant. We will try with te(weight, height).
+
+```{r}
+gam4.9.int <- gam(FGm12 ~ Treatment + s(FGm0) + te(weight, height, by = Treatment),
+  data = hirs
+)
+summary(gam4.9.int)
+```
+
+Overall, it looks like the best model is gam4.2. Let us compare it will all other models with anova.
+
+```{r}
+anova(gam4.2, gam4.4, gam4.5, gam4.6, gam4.7, gam4.8, gam4.9,
+  gam4.4.int, gam4.5.int, gam4.6.int, gam4.7.int, gam4.8.int, gam4.9.int,
+  test = "F"
+)
+```
+
+We remove the worst models.
+
+```{r}
+anova(gam4.1, gam4.8, gam4.9,
+  gam4.5.int, gam4.7.int, gam4.9.int,
+  test = "F"
+)
+```
+
+We do the same again.
+
+```{r}
+anova(gam4.1, gam4.8, gam4.9,
+  gam4.7.int,
+  test = "F"
+)
+```
+
+It seems that adding s(height, by = Treatment) is useful. We can also try to add te(SysPres, DiaPres, by = Treatment).
+
+```{r}
+gam4.10 <- gam(
+  FGm12 ~ Treatment + s(FGm0) + s(height, by = Treatment)
+    + te(SysPres, DiaPres, by = Treatment),
+  data = hirs
+)
+summary(gam4.10)
+```
+
+R-sq.(adj) and Deviance explained have increased a lot. Let us check the residuals of gam4.10.
+
+```{r}
+gam.check(gam4.10)
+```
+
+The tensor spline has 25 knots, which are way more than the edf of its variables. Hence, we reduce them to 4^2 = 16.
+
+```{r}
+gam4.11 <- gam(
+  FGm12 ~ Treatment + s(FGm0) + s(height, by = Treatment)
+    + te(SysPres, DiaPres, by = Treatment, k = 4),
+  data = hirs
+)
+summary(gam4.11)
+gam.check(gam4.11)
+anova(gam4.10, gam4.11, test = "F")
+```
+
+Even though R-sq.(adj) and explained Deviance have decreased a little, we can reject that decreasing the number of knots of te(weight, height, by=Treatment) does not improve the model.
+
+Maybe we need more interactions. We will start with s(FGm0).
+
+```{r}
+gam4.12 <- gam(
+  FGm12 ~ Treatment + s(FGm0, by = Treatment) + s(height, by = Treatment)
+    + te(SysPres, DiaPres, by = Treatment, k = 4),
+  data = hirs
+)
+summary(gam4.12)
+```
+
+R-sq.(adj) and explained Deviance have increased again. weight is the only baseline predictor we are not using; let us add it again, but now interacting with Treatment.
+
+```{r}
+gam4.13 <- gam(
+  FGm12 ~ s(FGm0, by = Treatment) + s(height, by = Treatment)
+    + s(weight, by = Treatment)
+    + te(SysPres, DiaPres, by = Treatment, k = 4),
+  data = hirs
+)
+summary(gam4.13)
+```
+
+This seems to be a good model. Let us check that the number of knots is a proper one.
+
+```{r}
+gam.check(gam4.13)
+```
+
+Gam.13 shows nice fitted values compared to real ones, however residuals are not normally distributed and seem to have heavier tails, highlighting that in some cases the model deviates significantly from the real values.
+
+The number of knots of s(FGm0, by=Treatment) should be higher, but fitting gam4.13 is so slow that adding more knots causes the algorithm to crash.
+
+For some treatments, FGm0, height and weight seem to be linear. Let us make them linear terms one by one.
+
+```{r}
+gam4.13.1 <- gam(
+  FGm12 ~ FGm0 * Treatment + s(height, by = Treatment)
+    + s(weight, by = Treatment)
+    + te(SysPres, DiaPres, by = Treatment, k = 4),
+  data = hirs
+)
+summary(gam4.13.1)
+anova(gam4.13, gam4.13.1, test = "F")
+```
+
+According to anova, it is better to treat FGm0 linearly, but if we do so, then predictors are less significant and R-sq.(adj) and explained Deviance decrease a lot.
+
+Let us try with height.
+
+```{r}
+gam4.13.2 <- gam(
+  FGm12 ~ s(FGm0, by = Treatment) + height * Treatment
+    + s(weight, by = Treatment)
+    + te(SysPres, DiaPres, by = Treatment, k = 4),
+  data = hirs
+)
+summary(gam4.13.2)
+anova(gam4.13, gam4.13.2, test = "F")
+```
+
+We obtain analogous results. Let us finally try with weight.
+
+```{r}
+gam4.13.3 <- gam(
+  FGm12 ~ s(FGm0, by = Treatment) + s(height, by = Treatment)
+    + weight * Treatment
+    + te(SysPres, DiaPres, by = Treatment, k = 4),
+  data = hirs
+)
+summary(gam4.13.3)
+anova(gam4.13, gam4.13.3, test = "F")
+```
+
+With weight, the worsening effect is much smaller. Let us compare the residuals of gam4.13 and gam4.13.3 to get a better picture of the situation.
+
+```{r}
+gam.check(gam4.13)
+gam.check(gam4.13.3)
+```
+
+The residuals of gam4.13.3 are more normally distributed and homoscedastic than those of gam4.13. Hence, each model has different pros and cons: gam4.13 explains almost all of the variance in the data, but its residuals are not normally distributed nor hoomoscedastic, while gam4.13.3 explains a lot of the variance in the data (but not almost all of it) and its residuals follow the models' assumptions better. In other words, gam4.13.3 shows a tradeoff between variance explanation and residuals' quality.
+
+Moreover, gam4.13 might overfit the data, while gam4.13.3 might generalize better, since it is more parsimonious.
+
+We can also compare the fitted linear model with gam4.13.3.
+
+```{r}
+summary(gam4)
+summary(gam4.13.3)
+anova(gam4, gam4.13.3, test = "F")
+```
+
+The improvement is clear, since the linear model was very limited. Hence, we finally decide gam4.13.3 as our best model:
+
+FGm12 ~ s(FGm0, by=Treatment) + s(height, by=Treatment) + weight*Treatment + te(SysPres, DiaPres, by=Treatment, k=4)
+
+Let us interpret and visualize gam4.13.3.
+
+## Model interpretation and visualization
+
+```{r}
+summary(gam4.13.3)
+```
+
+Overall, we have fit a semiparametric GAM to the hirsutism dataset in order to predict the hirsutism level observed on patients after following a certain treatment for a year.
+
+There are 4 different treatments and, according to the model, each affects the final hirsutism level differently based on the baseline height, weight, systolic blood pressure, diastolic blood pressure and hirsutism level. Baseline measures were taken at the start of the clinical trial.
+
+The effects of FGm0 and height are estimated independently with non-parametric estimators. On the other hand, the term corresponding to the weight predictor has been estimated linearly to improve the parsimony and the residuals' quality of the model. Finally, SysPres and DiaPres form a tensor spline with $4^2$ knots.
+
+As mentioned before, all terms interact with Treatment, which shows that, depending on the characteristics of the patient, one treatment or another should be prescribed. Nonetheless, treatments 1 and 2 reduce the hirsutism level the most on average. Treatment 3 could be prescribed to heavy people, however.
+
+On average, treatment 0 (only contraceptive) does not show a significant reduction of the hirsutism level after a year of treatment, causing its expected value to be about 26. Treatments 1 and 2 (with antiandrogen), however, eradicate hirsutism level after a year, since their expected value is negative (and hence null). Finally, treatment 3 (also with antiandrogen) is expected to decrease the hirsutism level to about 12 in the same period of time.
+
+Next, we will plot the non-parametric regression terms of the semiparametric GAM to identify what treatment is most suitable to different kinds of patients, as well as to find out about how the baseline characteristics of people affect their final hirsutism level on average.
+
+```{r}
+par(mfrow = c(1, 1))
+vis.gam(gam4.13.3, view = c("height", "weight"), plot.type = "persp", theta = 30, phi = 30)
+vis.gam(gam4.13.3, view = c("height", "weight"), plot.type = "contour", main = "FGm12")
+```
+
+The height term seems almost constant on average. In addition, tall heavy people will have the smallest average hirsutism levels at the end of their treatment.
+
+In the summary of the model, we can see that the weight coefficient is lowest for treatment 3. Hence, heavy people should undertake treatment 3.
+
+```{r}
+plot(gam4.13.3, residuals = TRUE, shade = TRUE, seWithMean = TRUE, pages = 4)
+```
+
+s(FGm0):Treatment0 and s(height):Treatment0 have high standard errors at the boundaries and it is difficult to observe their fitted non-parametric regressions. This is probably caused by the lack of short or tall patients with high FGm0 (not necessarily both) that undertook treatment 0.
+
+Let us look at the the smooth terms of treatments 1, 2 and 3.
+
+```{r}
+# Plot smooth terms one by one, skipping Treatment0
+par(mfrow = c(2, 3))
+for (i in c(2, 3, 4, 6, 7, 8)) {
+  plot(gam4.13.3,
+    residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = i,
+    ylim = c(-20, 20)
+  )
+}
+par(mfrow = c(1, 1))
+```
+
+- For treatment 1, it is best to have a baseline hirsutism level around 20 and, less significantly, to be short.
+
+- For treatment 2, the lower the baseline hirsutism level and, more significantly, the taller the patient is, the better.
+
+- For treatment 3, we recommend to prescribe it to tall patients with a low baseline hirsutism level.
+
+Now, let us look at the same terms for treatment 0.
+
+```{r}
+par(mfrow = c(1, 2))
+# FGm0
+plot(gam4.13.3,
+  residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 1,
+  ylim = c(-100, 200)
+)
+# height
+plot(gam4.13.3,
+  residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 5,
+  ylim = c(-500, 200)
+)
+par(mfrow = c(1, 1))
+```
+
+Let us zoom at the y-range with the biggest amount of patients.
+
+```{r}
+par(mfrow = c(1, 2))
+# FGm0
+plot(gam4.13.3,
+  residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 1,
+  ylim = c(-100, 100)
+)
+# height
+plot(gam4.13.3,
+  residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 5,
+  ylim = c(-100, 100)
+)
+par(mfrow = c(1, 1))
+```
+
+Even though more data would be needed, we can approximately state that treatment 0 could be appropriate for tall people with a low baseline hirsutism level. However, treatment 2, which is more effective on average than treatment 0, would also be suitable for those patients. Consequently, other characteristics of the patient should be considered to opt for treatment 0.
+
+```{r}
+par(mfrow = c(1, 1))
+vis.gam(gam4.13.3, view = c("SysPres", "DiaPres"), plot.type = "persp", theta = 30, phi = 30)
+vis.gam(gam4.13.3, view = c("SysPres", "DiaPres"), plot.type = "contour", main = "FGm12")
+```
+
+The average hirsutism level after 1 year of treatment is lowest for patients with high diastolic blood pressure and low systolic pressure simultaneously or low diastolic blood pressure and high systolic blood pressure simultaneously as well. We will now check what treatment is most suitable according to the baseline systolic and diastolic blood pressures of patients.
+
+```{r}
+# Treatment 0
+plot(gam4.13.3, residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 9)
+```
+
+- Treatment 0 is most suitable for people with low baseline systolic and diastolic blood pressures.
+
+```{r}
+# Treatment 1
+plot(gam4.13.3, residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 10)
+```
+
+- Treatment 1, on the other hand, is better suited for people with high systolic blood pressure.
+
+```{r}
+# Treatment 2
+plot(gam4.13.3, residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 11)
+```
+
+- Treatment 2 is best for those patients with simultaneously low or high baseline systolic and diastolic blood pressures.
+
+```{r}
+# Treatment 3
+plot(gam4.13.3, residuals = TRUE, shade = TRUE, seWithMean = TRUE, select = 12)
+```
+
+- Finally, treatment 3 is the appropriate one for people with high systolic blood pressure and low diastolic blood pressure.
+
+To conclude, the semiparametric GAM we have fitted has allowed us not only to predict the hirsutism level after the treatment of a patient, but also to recommend him/her/them the most appropriate treatment according to his/her/their hirsutism level, height, weight and blood pressure. Moreover, our model explains 93.9% of the deviance, has an adjusted $R^2$ of 0.832 and its residuals are normally distributed homoscedastic, making it correct, precise and able to generalize to new observations. Nonetheless, more short or tall patients with high FGm0 (not necessarily both) that undertook treatment 0 would have allowed us to better understand the base treatment without antiandrogen.

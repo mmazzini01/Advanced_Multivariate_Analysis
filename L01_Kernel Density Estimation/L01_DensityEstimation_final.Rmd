@@ -1,0 +1,258 @@
+---
+title: "Density estimation: Bandwidht choice by leave-one-out maximum likelihood"
+author: "Adrià Casanova, Silvia Ferrer, Matteo Mazzini"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(latex2exp)
+```
+
+# Histogram
+
+## 1.
+
+We assume the intervals of the histogram to have constant width $b$. Then,
+$$
+\hat{f}_{hist}(x_i) = \frac{1}{nb}\sum_{k=1}^{n}I_{B_{j(x_k)}}(x_i) =
+\frac{1}{nb}\sum_{k \neq i}^{n}I_{B_{j(x_k)}}(x_i) + \frac{1}{nb}
+$$
+
+On the other hand,
+$$
+\hat{f}_{hist, (-i)}(x_i) = \frac{1}{(n-1)b}\sum_{k \neq i}^{n}I_{B_{j(x_k)}}(x_i)
+$$
+
+Hence, we get the following relationship between the histogram estimator of the density function and its leave-one-out version, when both are evaluated at $x_i$:
+$$
+\hat{f}_{hist}(x_i) = \frac{n}{n-1}\Big(\hat{f}_{hist}(x_i) - \frac{1}{nb}\Big)
+$$
+
+## 2. and 3.
+
+In the following graph we can see how indeed the histogram is a piece-wise constant function defined on the range of our data. Moreover, $\hat{f}_{hist,(-i)}(x_i)$ is close to $\hat{f}_{hist}(x_i)$, as $n=69$ is large.
+```{r}
+########################
+# 2.
+########################
+#Read data
+cdrate.df <-read.table("cdrate.dat")
+x <- cdrate.df[,1]
+
+A <- min(x)-.05*diff(range(x)) 
+Z <- max(x)+.05*diff(range(x))
+nbr <- 7
+
+#Histogram of x
+hx <- hist(x,breaks=seq(A,Z,length=nbr+1),freq=F
+           , main = "CD rate histogram", xlab = "CD rate")
+hx_f <- stepfun(hx$breaks,c(0,hx$density,0))
+
+#Add the points (x_i, \hat{f}_{hist}(x_i)) to the histogram
+hx_f_xi <- hx_f(x)
+points(x,hx_f_xi, pch=1)
+
+########################
+# 3.
+########################
+#Compute \hat{f}_{hist,(-i)}(x_i)
+n <- length(x)
+b <- hx$breaks[2] - hx$breaks[1]
+hx_i_f_xi <- n/(n-1) * (hx_f(x) - 1/(n*b))
+
+#Add the points (x_i, \hat{f}_{hist,(-i)}(x_i)) to the histogram
+points(x, hx_i_f_xi, pch = 18)
+legend("topleft", c(TeX(r"{\hat{f}_{hist}}"), TeX(r"{\hat{f}_{hist,(-i)}}")), 
+       pch=c(1,18))
+
+```
+
+## 4.
+Taking 7 as the number of intervals, the log-likelihood value calculated with 
+the LOOCV method is the following:
+
+```{r}
+hx_i_f_xi[hx_i_f_xi == 0] <- .Machine$double.eps #avoid log 0
+log_lik <- sum(log(hx_i_f_xi))
+cat("Leave-One-Out Log-Likelihood:", log_lik, "\n")
+```
+
+## 5.
+
+```{r,warning=T}
+nbr_values <- seq(1, 15)
+  
+loocv_nbr <- function(nbr) {
+  hx <- hist(x, breaks=seq(A, Z, length=nbr+1), plot=F)
+  hx_f <- stepfun(hx$breaks, c(0, hx$density, 0))
+  hx_f_xi <- hx_f(x)
+  
+  b <- hx$breaks[2] - hx$breaks[1]
+  hx_i_f_xi <- n/(n-1) * (hx_f(x) - 1/(n*b))
+  
+  # Compute the leave-one-out log-likelihood for each nbr
+  hx_i_f_xi[hx_i_f_xi  < .Machine$double.eps] <- .Machine$double.eps #avoid log 0 or small negative values
+  return(sum(log(hx_i_f_xi)))
+}
+looCV_log_lik <- lapply(nbr_values, loocv_nbr)
+
+# Plot looCV_log_lik against nbr values
+plot(nbr_values, looCV_log_lik, type="b", pch=19, col="blue",
+     main="Leave-One-Out Log-Likelihood vs Number of Intervals",
+     xlab="Number of Intervals", ylab="Log-Likelihood")
+
+# Find the optimal nbr
+opt_nbr <- nbr_values[which.max(looCV_log_lik)]
+cat("Optimal number of intervals", opt_nbr, "\n")
+
+# Plot histogram using the optimal nbr
+hx_opt_nbr <- hist(x,breaks=seq(A,Z,length=opt_nbr+1), plot=F)
+plot(hx_opt_nbr, freq=FALSE)
+
+```
+
+Looking at the first plot we can see that the number of intervals that maximizes
+the log-likelihood is 5, but we also see that 11 intervals is the second one. 
+The resulting histogram employs this optimal number of intervals, previously 
+calculated with the LOOCV, effectively capturing the underlying distribution.
+
+## 6. 
+
+```{r}
+
+b_values <- seq((Z-A)/15, (Z-A)/1, length=30)
+looCV_log_lik_b <- sapply(b_values,function(b) {
+  hx <- hist(x, breaks=seq(A, Z+b, by=b), plot=F)
+  hx_f <- stepfun(hx$breaks, c(0, hx$density, 0))
+  hx_i_f_xi <- n/(n-1) * (hx_f(x) - 1/(n*b))
+  # Compute the leave-one-out log-likelihood for each b
+  hx_i_f_xi[hx_i_f_xi <= 0] <- .Machine$double.eps #avoid log 0 or negative
+  looCV_log_lik_b <- sum(log(hx_i_f_xi))
+})
+
+# Plot looCV_log_lik_b against b values
+plot(b_values, looCV_log_lik_b, type="b", pch=19, col="red",
+     main="Leave-One-Out Log-Likelihood vs Bin Width",
+     xlab="Bin Width", ylab="Log-Likelihood")
+
+# Find the optimal bin width
+opt_b <- b_values[which.max(looCV_log_lik_b)]
+cat("Optimal bin width:", opt_b, "\n")
+
+# Plot histogram using the optimal bin width
+hx_opt_b <- hist(x,breaks=seq(A,Z+b,by=opt_b), plot=F)
+plot(hx_opt_b, freq=FALSE)
+
+```
+
+Similar to the previous approach, we calculated the optimal parameter, the bin 
+width, using the LOOCV method, and after plotted the resulting histogram.
+The bin width that maximized the log-likelihood function was selected, ensuring 
+a robust fit to the underlying distribution of the data.
+
+## 7.
+Now, we will use the functions `graph.mixt` and `sim.mixt` from the previous lab session to generate data from the following mixture of two normal distributions:
+
+\[
+f(x) = \frac{3}{4} N(x; \mu = 0, \sigma = 1) + \frac{1}{4} N(x; \mu = \frac{3}{2}, \sigma = \frac{1}{3})
+\]
+```{r, echo=FALSE}
+#functions that will generate data coming froma mixture of two normals (previous labs)
+graph.mixt<-
+  function(k=1, mu=seq(-2*(k-1),2*(k-1),length=k), sigma=seq(1,1,length=k), alpha=seq(1/k,1/k,length=k), graphic=F,...)
+  {
+    L<-min(mu-3*sigma)
+    U<-max(mu+3*sigma)
+    
+    x<- seq(from=L,to=U,length=200)
+    fx<- 0*x
+    Salpha<-sum(alpha)
+    for(i in 1:k){
+      p<-alpha[i]/Salpha
+      #       fx <- fx + p*exp(-.5*((x-mu[i])/sigma[i])^2)/(sqrt(2*pi)*sigma[i])
+      fx <- fx + p*dnorm(x,mu[i],sigma[i])
+    }
+    if (graphic){
+      plot(x,fx,type="l",...)
+    }
+    return(list(L = L, U = U, x = x, fx = fx))
+  }
+sim.mixt <- function(n=1,k=1, 
+                     mu=seq(-2*(k-1),2*(k-1),length=k), 
+                     sigma=seq(1,1,length=k), 
+                     alpha=seq(1/k,1/k,length=k), graphic=FALSE,...)
+{
+  csa<-cumsum(alpha)
+  x<-runif(n)
+  
+  for (i in 1:n){
+    comp<-sum(csa<=x[i])+1
+    x[i]<-rnorm(1,mu[comp],sigma[comp])
+  }
+  if(graphic) {
+    out<-graph.mixt(k, mu, sigma, alpha, gr=FALSE)
+    hist(x,freq = FALSE,
+         ylim=c(0,max(c(max(out$fx),max(hist(x,plot=FALSE)$density)))))
+    lines(out$x,out$fx,lty=1,lwd=2)
+  }   
+  return(x)
+}
+```
+
+
+```{r}
+#generate data
+set.seed(123)
+n <- 100
+mu <- c(0,3/2)
+sigma <- c(1,1/3)
+alpha <- c(3/4,1/4)
+x <- sim.mixt(n=n, k=2, mu=mu, sigma=sigma, alpha=alpha, gr=F)
+A <- min(x)-.05*diff(range(x)) 
+Z <- max(x)+.05*diff(range(x))
+b_values <- seq((Z-A)/15, (Z-A)/1, length=30)
+n <- length(x)
+#LOOCV-loglikelihood function
+looCV_log_lik_b <- sapply(b_values, function(b) {
+  hx <- hist(x, breaks=seq(A, Z+b, by=b), plot=F)
+  hx_f <- stepfun(hx$breaks, c(0, hx$density, 0))
+  hx_i_f_xi <- n/(n-1) * (hx_f(x) - 1/(n*b))
+  hx_i_f_xi[hx_i_f_xi <= 0] <- .Machine$double.eps #avoid log 0 or negative
+  looCV_log_lik_b <- sum(log(hx_i_f_xi))
+})
+opt_b <- b_values[which.max(looCV_log_lik_b)]
+#histogram using the optimal bin width
+hx_opt_b <- hist(x,breaks=seq(A,Z+b,by=opt_b), plot=F)
+#comapare it with scott's formula
+b_Scott <- 3.49 * sd(x) * length(x)^(-1/3)
+hx_scotts_b <- hist(x,breaks=seq(A,Z+b,by=b_Scott), plot=F)
+cat("Optimal bin width:", opt_b, "\n")
+cat("Optimal Scott's bin width:", b_Scott, "\n")
+par(mfrow= c(1,2))
+plot(hx_opt_b, freq=FALSE, main="LOOCV Bin Width")
+plot(hx_scotts_b, freq=FALSE, main="Scott's Formula Bin Width")
+```
+
+We can see that the bin width chosen with the LOOCV method tends to capture more subtle details in the data, such as the multimodality. On the other hand, Scott's formula smooths the distribution more broadly, potentially losing some structure of the underlying data.  
+## 8.
+```{r}
+#create h:values as before
+h_values<- seq((Z-A)/15,(Z-A)/1,length=30)
+#LOOCV-loglikelihood 
+looCV_log_lik_h <- sapply(h_values,function(h){
+  kx <- density(x, bw = h)
+  kx_f <- approxfun(kx$x, kx$y, method = 'linear', rule = 2)
+  kx_i_f_xi<- (n / (n - 1)) * (kx_f(x) - dnorm(0)/ (n * h))
+  kx_i_f_xi[kx_i_f_xi <= 0] <- .Machine$double.eps #avoid log 0 or negative
+  looCV_log_lik_h <- sum(log(kx_i_f_xi))
+})
+opt_h <- h_values[which.max(looCV_log_lik_h)]
+cat("Optimal bin width:", opt_h, "\n")
+
+kx_opt <- density(x, bw = opt_h)
+plot(kx_opt, main = 'LOOCV Kernel Density Bin width')
+```
+
+The two distinct peaks visible in the plot reflect the underlying mixture of two normal distributions, suggesting that the LOOCV method effectively produces a bin width value that captures the multimodal nature of the data.

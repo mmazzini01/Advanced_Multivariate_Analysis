@@ -1,0 +1,573 @@
+---
+title: "Non-linear dimensionality reduction: Principal curves, local MDS, Isomap
+and t-SNE"
+author: "Adrià Casanova, Silvia Ferrer, Matteo Mazzini"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(latex2exp)
+library(stops)
+library(vegan)
+library(Rtsne)
+
+set.seed(42)
+```
+
+
+# PART A. Principal Curves
+
+## 1. Choosing the smoothing parameter in Principal Curves (Hastie and Stuetzle 1989)
+
+
+```{r A.1 data generation}
+t <- seq(-1.5*pi,1.5*pi,l=100)
+R<- 1
+n<-75
+sd.eps <- .15
+
+set.seed(1)
+y <- R*sign(t) - R*sign(t)*cos(t/R)
+x <- -R*sin(t/R)
+z <- (y/(2*R))^2
+rt <- sort(runif(n)*3*pi - 1.5*pi)
+eps <- rnorm(n)*sd.eps
+ry <- R*sign(rt) - (R+eps)*sign(rt)*cos(rt/R)
+rx <- -(R+eps)*sin(rt/R)
+rz <- (ry/(2*R))^2 + runif(n,min=-2*sd.eps,max=2*sd.eps)
+XYZ <- cbind(rx,ry,rz)
+
+
+require(plot3D)
+lines3D(x,y,z,colvar = NULL, 
+         phi = 20, theta = 60, r =sqrt(3), d =3, scale=FALSE,
+         col=2,lwd=4,as=1,
+         xlim=range(rx),ylim=range(ry),zlim=range(rz))
+points3D(rx,ry,rz,col=4,pch=19,cex=.6,add=TRUE)
+```
+
+### Questions
+#### a) Choose the value of the degrees of freedom df by leave-one-out cross-validation.
+
+The search of df is restricted to $$seq(2,8,by=1)$$.
+
+```{r A.1.a}
+library(princurve)
+
+df_range <- seq(2, 8, by = 1)
+cv_errors <- numeric(length(df_range))   # LOOCV errors for each df
+
+for (i in seq_along(df_range)) {
+  df <- df_range[i]
+  
+  # LOOCV
+  for (j in 1:nrow(XYZ)) {
+    # exclude one point
+    XYZ_train <- XYZ[-j, ]
+    
+    # fit principal curve to training set with current df
+    fit <- principal_curve(XYZ_train, df = df)
+    
+    # project excluded point (j) onto the fitted curve
+    proj <- project_to_curve(XYZ[j, , drop=FALSE], s = fit$s)
+    
+    # error in sqr dist for each df
+    cv_errors[i] <- cv_errors[i] + proj$dist
+  }
+  cv_errors[i] <- cv_errors[i] / nrow(XYZ) # mse
+}
+
+# df which minimizes loocv error
+optimal_df <- df_range[which.min(cv_errors)]
+
+cat("Optimal degrees of freedom (df):", optimal_df, "\n")
+cat("LOOCV Errors for each df:", cv_errors, "\n")
+
+plot(df_range, cv_errors)
+```
+
+
+#### b) Give a graphical representation of the principal curve output for the optimal df and comment on the obtained results.
+
+```{r A.1.b}
+# principal curve using the optimal df
+optimal <- principal_curve(XYZ, df = optimal_df)
+
+# original data points
+points3D(rx, ry, rz, col = 4, pch = 19, cex = 0.6, xlim = range(rx), ylim = range(ry), zlim = range(rz),
+         phi = 20, theta = 60, r = sqrt(3), d = 3)
+
+# fitted principal curve
+lines3D(optimal$s[, 1], optimal$s[, 2], optimal$s[, 3], col = 2, lwd = 4, add = TRUE)
+
+title(main = paste("Principal Curve for the Optimal df =", optimal_df))
+```
+
+The principal curve is performing well in representing the underlying trend of the data while maintaining a smooth appearance. The degrees of freedom of 6 provide a good balance, capturing the main non-linear relationships in the data. The curve closely follows the denser clusters of points and reasonably smooths through the less dense regions.
+
+#### c) Compute the leave-one-out cross-validation error for df=50 and compare it with the result corresponding to the optimal df value you found before.
+
+- Before fitting the principal curve with df=50 and based only on the leave-one-out cross-validation error values, what value for df do you think that is better, the previous optimal one or df=50?
+
+The optimal df (with a maximum of 8) is likely to be the better choice, as df=50 will fit the data too closely, leading to overfitting. This higher degree of freedom allows for excessive fitting to the training data. In contrast, a df of 6, the optimal, will provide a more generalized model.
+
+```{r A.1.c}
+# fit the principal curve with df = 50
+fit_df_50 <- principal_curve(XYZ, df = 50)
+proj <- project_to_curve(XYZ, fit_df_50$s)
+
+cv_errors_50 <- numeric(nrow(XYZ))
+
+# LOOCV
+for (j in 1:nrow(XYZ)) {
+  # exclude one point
+  XYZ_train <- XYZ[-j, ]
+  
+  fit <- principal_curve(XYZ_train, df = 50)
+  proj <- project_to_curve(XYZ[j, , drop=FALSE], s = fit$s)
+  
+  # error in sqr dist for each df
+  cv_errors_50[j] <- proj$dist
+}
+
+# mse loocv
+cat("Mean LOOCV Error for df = 50 :", mean(cv_errors_50), "\n")
+cat("Mean LOOCV Error for df =", optimal_df, ": ", cv_errors[optimal_df-1], "\n")
+
+# original data points
+points3D(rx, ry, rz, col = 4, pch = 19, cex = 0.6, xlim = range(rx), ylim = range(ry), zlim = range(rz),
+         phi = 20, theta = 60, r = sqrt(3), d = 3)
+
+# fitted principal curve df optimal
+lines3D(optimal$s[, 1], optimal$s[, 2], optimal$s[, 3], col = 2, lwd = 4, add = TRUE)
+
+# fitted principal curve df 50
+lines3D(fit_df_50$s[, 1], fit_df_50$s[, 2], fit_df_50$s[, 3], col = 3, lwd = 4, add = TRUE)
+
+legend("topright", c("df=6","df=50"),col=c(2,3),lty=1)
+title(main = paste("Principal Curve for df =", optimal_df, "and df = 50"))
+
+```
+
+- Now, what value of df do you prefer?
+
+We can observe a lower value of loocv error when df=50 than for the optimal df, df=6, calculated in the previous section. It’s clear that there’s a high overfitting with df=50, so an optimal df is preferred, one that falls within a range where the values aren’t too high and the error is minimized. This way, the model can better adapt and find a balance between underfitting and overfitting.
+
+- The overfitting with df=50 is clear. Nevertheless leave-one-out cross-validation has not been able to detect this fact. Why do you think that df=50 is given a so good value of leave-one-out cross-validation error?
+
+LOOCV might not reliably detect this overfitting because of its sensitivity to high-variance models.
+With df=50, the model can adjust itself to each small perturbation in the data, so it achieves low error for individual points in each iteration.
+
+# PART B. Local MDS, ISOMAP and t-SNE
+
+In this section, we will use three nonlinear dimensionality reduction techniques to extract insightful features from a dataset of images of zeros.
+
+First, we will load the zip.train dataset we will be working with. It contains low-resolution images of digits, from which we will select only those labeled as 0.
+
+```{r B load data}
+zip.train <- read.table("zip.train")
+I.0 <- (zip.train[,1]==0)
+zip.0 <- zip.train[I.0,]
+data <- zip.0[,-1]
+n <- dim(zip.0)[1]
+cat("Number of images:", n, "\n")
+```
+
+```{r B plot.zip,echo=F}
+# ploting 1 digit
+plot.zip <- function(x,use.first=FALSE,...){
+  x<-as.numeric(x)
+  if (use.first){
+    x.mat <- matrix(x,16,16)
+  }else{
+    x.mat <- matrix(x[-1],16,16)
+  }
+  image(1:16,1:16,x.mat[,16:1],
+        col=gray(seq(1,0,l=12)),...)
+  invisible(
+    if (!use.first){
+      title(x[1])
+    }else{
+    }
+  )  
+  #col=gray(seq(1,0,l=2)))
+}
+```
+
+These are some of the figures we will analyze.
+
+```{r B example figures,echo=FALSE,fig.width=6, fig.height=2.2}
+n.plots <- 3
+par(mfrow=c(1, n.plots))
+invisible(
+  lapply(1:n.plots, function(i) plot.zip(zip.0[i,])))
+par(mfrow=c(1, 1))
+```
+
+
+## 2. Local MDS for ZERO digits
+
+### a.
+
+In order to visualize the low-dimensional configuration, we will perform LMDS with $q=2$, $k=5$ and $\tau = 0.05$.
+
+```{r B.2.a compute LMDS,eval=FALSE}
+dist_matr <- as.matrix(dist(data))
+conf0 <- stats::cmdscale(dist_matr, k=2)
+local_mds <- lmds(dist_matr, init=conf0, ndim=2, k=5, tau=0.05, itmax = 1000)
+plot(local_mds)
+```
+
+```{r B.2.a load LMDS,echo=FALSE}
+load('local_mds.RData')
+plot(local_mds)
+```
+
+### b.
+
+Now we choose 9 points that represent all the variability on both axes and we plot the respective images. 
+
+```{r B.2.b,fig.width=6, fig.height=6.6}
+lmds_conf <- local_mds$conf
+plot(local_mds, main = "Local-MDS for ZERO digits")
+
+# Create the coordinates for the 9 artificial points
+x_vals <- c(min(lmds_conf[,1]), median(lmds_conf[,1]), max(lmds_conf[,1]))
+y_vals <- c(min(lmds_conf[,2]), median(lmds_conf[,2]), max(lmds_conf[,2]))
+artificial_points <- expand.grid(x = x_vals, y = y_vals)
+
+# For each artificial point, find the closest point in the configuration
+closest_points <- apply(artificial_points, 1, function(artificial_point) {
+  distances <- apply(lmds_conf, 1, function(row) {
+    dist(rbind(artificial_point, data.frame(x = row[1], y = row[2])))
+    })
+  which.min(distances)
+})
+points(lmds_conf[closest_points,], col="red", pch=15)
+#images
+par(mfrow=c(3, 3))
+invisible(
+  lapply(closest_points, function(i) plot.zip(data[i,],use.first = T)))
+```
+
+Each row shows the variation of zeros as they move along the x-axis, with the y-axis taking the minimum in the first row, the median in the second row, and the maximum in the third row.
+
+Looking at each column, we can see the variation of zeros as they move along the y-axis, with the x-axis held at minimum in the first row, at median in the second row, and at maximum in the third row.
+
+It is clear that the x-axis represents the width of the zeros, with higher values indicating wider images. In contrast, the y-axis denotes the thickness of the images, where larger values correspond to thicker images.
+
+### c.
+
+Now, we will use the local continuity meta criteria to select the tuning parameters $k$ and $\tau$.
+
+```{r LCMC,echo=FALSE}
+## Local Continuity Meta-criteria function
+LCMC <- function(D1,D2,Kp){
+  D1 <- as.matrix(D1)
+  D2 <- as.matrix(D2)
+  n <- dim(D1)[1]
+  N.Kp.i <- numeric(n)
+  for (i in 1:n){
+    N1.i <- sort.int(D1[i,],index.return = TRUE)$ix[1:Kp]
+    N2.i <- sort.int(D2[i,],index.return = TRUE)$ix[1:Kp]
+    N.Kp.i[i] <- length(intersect(N1.i, N2.i))
+  }
+  N.Kp<-mean(N.Kp.i)
+  M.Kp.adj <- N.Kp/Kp - Kp/(n-1)
+  
+  return(list(N.Kp.i=N.Kp.i, M.Kp.adj=M.Kp.adj))
+}
+```
+
+```{r B.2.c compute LCMC of LMDS}
+q <- 2
+Kp <- 10
+
+conf0 <- stats::cmdscale(dist(data),k=q)
+
+K <- c(5,10,50)
+tau <- c(.1,.5,1)
+
+LC.LMDS <- matrix(0,nrow=length(K),ncol=length(tau))
+lmds.k.tau <- array(vector("list",1),dim=dim(LC.LMDS))
+
+for (i in 1:length(K)){
+  for (j in 1:length(tau)){
+    lmds.k.tau[[i,j]] <- lmds(as.matrix(dist(data)), init=conf0, 
+                              ndim=q, k=K[i], tau=tau[j], itmax=1000)$conf
+    D2.k.tau <- dist(lmds.k.tau[[i,j]])
+    LC.LMDS[i,j] <- LCMC(dist(data),D2.k.tau,Kp)$M.Kp.adj
+  }
+}
+
+ij.max <- arrayInd(which.max(LC.LMDS),.dim=dim(LC.LMDS))
+k.max <- K[ij.max[1]] 
+tau.max <- tau[ij.max[2]] 
+lmds.max <- lmds.k.tau[[ij.max[1],ij.max[2]]]
+cat("k.max=",k.max,"; tau.max=",tau.max)
+```
+
+```{r B.2.c load LCMC of LMDS,echo=FALSE}
+load('k.max.RData')
+load('tau.max.RData')
+load('lmds.max.RData')
+cat("k.max=",k.max,"; tau.max=",tau.max)
+```
+
+```{r B.2.c interpret best LMDS,fig.width=6, fig.height=6.6}
+metalmds_conf <- lmds.max
+plot(metalmds_conf, main = " meta-Local-MDS for ZERO digits")
+
+# Create the coordinates for the 9 artificial points
+x_vals <- c(min(metalmds_conf[,1]), median(metalmds_conf[,1]), max(metalmds_conf[,1]))
+y_vals <- c(min(metalmds_conf[,2]), median(metalmds_conf[,2]), max(metalmds_conf[,2]))
+artificial_points <- expand.grid(x = x_vals, y = y_vals)
+
+# For each artificial point, find the closest point in the configuration
+closest_points <- apply(artificial_points, 1, function(artificial_point) {
+  distances <- apply(metalmds_conf, 1, function(row) {
+    dist(rbind(artificial_point, data.frame(x = row[1], y = row[2])))
+    })
+  which.min(distances)
+})
+points(metalmds_conf[closest_points,], col="red", pch=15)
+#images
+par(mfrow=c(3, 3))
+invisible(
+  lapply(closest_points, function(i) plot.zip(data[i,],use.first = T)))
+```
+
+As before, it seems that the first axis widens the zeros.
+
+As in the original configuration, higher values of the second axis correspond to thicker lines.
+
+## 3. ISOMAP for ZERO digits
+
+### a.
+
+In this exercise we will apply the same methodology as in the previous one. Hence, we will first perform ISOMAP with $q=2$ and $k=5$ to obtain a low-dimensional configuration that can be easily visualized and still contains insightful dimensions.
+
+```{r B.3.a}
+ismp <- isomap(dist(data),ndim = 2, k=5)
+plot(ismp)
+```
+
+### b.
+
+Next, we will select 9 points in each dimension that cover their whole variability. This way, we will obtain a "movie" for each dimension that shows us its action on the dataset.
+
+```{r B.3.b,fig.width=6, fig.height=6.6}
+isomap_conf <- ismp$points
+plot(isomap_conf, main = 'ISOMAP for ZERO digits')
+
+# Create the coordinates for the 9 artificial points
+x_vals <- c(min(isomap_conf[,1]), median(isomap_conf[,1]), max(isomap_conf[,1]))
+y_vals <- c(min(isomap_conf[,2]), median(isomap_conf[,2]), max(isomap_conf[,2]))
+artificial_points <- expand.grid(x = x_vals, y = y_vals)
+
+# For each artificial point, find the closest point in the configuration
+closest_points <- apply(artificial_points, 1, function(artificial_point) {
+  distances <- apply(isomap_conf, 1, function(row) {
+    dist(rbind(artificial_point, data.frame(x = row[1], y = row[2])))
+    })
+  which.min(distances)
+})
+points(isomap_conf[closest_points,], col="red", pch=15)
+#images
+par(mfrow=c(3, 3))
+invisible(
+  lapply(closest_points, function(i) plot.zip(data[i,],use.first = T)))
+```
+
+Axis 1 seems to widen zeros' shape when its value is higher.
+
+The second axis might represent the distorsion in the digit numbers. Lower y-values are more distorted numbers while higher values more 'circle-shaped' zeros, therefore less squeezed zeros.
+
+### c.
+
+```{r B.3.c LCMC for ISOMAP}
+# ISOMAP local continuity meta criteria function
+k_values <- c(5,10,50)
+Kp <- 10
+LC.ISOMAP <- numeric(length(k_values))
+D1 <- dist(data)
+ISOMAP.k <- vector("list",length(k_values))
+for (i in 1:length(k_values)){
+  ISOMAP.k[[i]] <- isomap(D1, ndim=2, 
+                            k= k_values[i])
+  D2.k <- dist(ISOMAP.k[[i]]$points[,1:2])
+  LC.ISOMAP[i] <- LCMC(D1,D2.k,Kp)$M.Kp.adj
+}
+
+
+i.max <- which.max(LC.ISOMAP)
+k.max <- k_values[i.max]
+ISOMAP.max <- ISOMAP.k[[i.max]]
+
+plot(k_values, LC.ISOMAP, type="b", main=paste0("k.max=",round(k.max,4)))
+abline(v=k.max,col=2)
+```
+
+Now we choose 9 points to interpret the axes.
+
+```{r B.3.c interpet best ISOMAP,fig.width=6, fig.height=6.6}
+metaisomap_conf <- ISOMAP.max$points
+plot(metaisomap_conf, main = 'meta-ISOMAP Zero digits')
+
+# Create the coordinates for the 9 artificial points
+x_vals <- c(min(metaisomap_conf[,1]), median(metaisomap_conf[,1]), max(metaisomap_conf[,1]))
+y_vals <- c(min(metaisomap_conf[,2]), median(metaisomap_conf[,2]), max(metaisomap_conf[,2]))
+artificial_points <- expand.grid(x = x_vals, y = y_vals)
+
+# For each artificial point, find the closest point in the configuration
+closest_points <- apply(artificial_points, 1, function(artificial_point) {
+  distances <- apply(metaisomap_conf, 1, function(row) {
+    dist(rbind(artificial_point, data.frame(x = row[1], y = row[2])))
+    })
+  which.min(distances)
+})
+points(metaisomap_conf[closest_points,], col="red", pch=15)
+#images
+par(mfrow=c(3, 3))
+invisible(
+  lapply(closest_points, function(i) plot.zip(data[i,],use.first = T)))
+```
+
+As noted earlier, axis 1 appears to widen the shape of the zeros when its value is higher.
+
+In contrast, the second axis seems to represent the distortion of the digit shapes. Lower y-values correspond to more distorted zeros, while higher values indicate a more 'circle-shaped' appearance, resulting in less squeezed zeros.
+
+## 4. t-SNE for ZERO digits
+
+### a.
+
+Finally, we will apply t-SNE to the ZERO digits dataset. To start with, we will look for a 2-dimensional configuration of the data using parameters perplexity=40 and theta=0.
+
+```{r B.4.a}
+q <- 2
+zip.0.rtsne <- Rtsne(zip.0[,-1], dims=q, perplexity = 40, theta = 0)
+tsne.config <- zip.0.rtsne$Y
+plot(tsne.config, xlab = "Y[,1]", ylab = "Y[,2]"
+     , main = "t-SNE for ZERO digits")
+```
+
+### b.
+
+As usual, we will interpret the 2 coordinates obtained with t-SNE through 9 points that cover all the variability.
+
+```{r B.4.b,fig.width=6, fig.height=6.6}
+plot(tsne.config, xlab = "Y[,1]", ylab = "Y[,2]"
+     , main = "t-SNE for ZERO digits")
+
+# Create the coordinates for the 9 artificial points
+x_vals <- c(min(tsne.config[,1]), median(tsne.config[,1]), max(tsne.config[,1]))
+y_vals <- c(min(tsne.config[,2]), median(tsne.config[,2]), max(tsne.config[,2]))
+artificial_points <- expand.grid(x = x_vals, y = y_vals)
+
+# For each artificial point, find the closest point in the configuration
+closest_points <- apply(artificial_points, 1, function(artificial_point) {
+  distances <- apply(tsne.config, 1, function(row) {
+    dist(rbind(artificial_point, data.frame(x = row[1], y = row[2])))
+    })
+  which.min(distances)
+})
+points(tsne.config[closest_points,], col="red", pch=15)
+#images
+par(mfrow=c(3, 3))
+invisible(
+  lapply(closest_points, function(i) plot.zip(data[i,],use.first = T)))
+
+```
+
+We can interpret axis 1 as line thickness; zeros on the right have thicker lines than those on the left.
+
+The second axis seems to change the width of the zeros. Lower points are thinner and higher points are wider.
+
+
+### c)
+
+Finally, we will use the local continuity meta criteria to select the tuning parameters for perplexity.
+
+```{r B.4.c LCMC for t-SNE}
+D1 <- dist(zip.0)
+Kp <- 10
+
+perplexity <- c(10, 20, 40)
+
+LC.tsne <- numeric(length(perplexity))
+Rtsne.k <- vector("list",length(perplexity))
+
+for (i in 1:length(perplexity)){
+    Rtsne.k[[i]] <- Rtsne(D1, perplexity=perplexity[i], dims=q,
+                          theta=0, pca=FALSE, max_iter = 1000)
+    D2.k <- dist(Rtsne.k[[i]]$Y)
+    LC.tsne[i] <- LCMC(D1,D2.k,Kp)$M.Kp.adj
+}
+perplexity.max <- perplexity[which.max(LC.tsne)]
+plot(perplexity, LC.tsne, type="b", main=paste0("perplexity.max=",perplexity.max))
+abline(v=perplexity.max,col=2)
+```
+
+The optimal value for perplexity is 20. Let us see graphically the low dimensional configuration it corresponds to.
+
+```{r B.4.c interpret best t-SNE,fig.width=6, fig.height=6.6}
+tsne.optim <- Rtsne.k[[which.max(LC.tsne)]]
+tsne.optim.config <- tsne.optim$Y
+plot(tsne.optim.config, xlab = "Y[,1]", ylab = "Y[,2]"
+     , main = "t-SNE for ZERO digits")
+
+# Create the coordinates for the 9 artificial points
+x_vals <- c(min(tsne.optim.config[,1]), median(tsne.optim.config[,1]), max(tsne.optim.config[,1]))
+y_vals <- c(min(tsne.optim.config[,2]), median(tsne.optim.config[,2]), max(tsne.optim.config[,2]))
+artificial_points <- expand.grid(x = x_vals, y = y_vals)
+
+# For each artificial point, find the closest point in the configuration
+closest_points <- apply(artificial_points, 1, function(artificial_point) {
+  distances <- apply(tsne.optim.config, 1, function(row) {
+    dist(rbind(artificial_point, data.frame(x = row[1], y = row[2])))
+    })
+  which.min(distances)
+})
+points(tsne.optim.config[closest_points,], col="red", pch=15)
+#images
+par(mfrow=c(3, 3))
+invisible(
+  lapply(closest_points, function(i) plot.zip(data[i,],use.first = T)))
+```
+
+In this new configuration, the second axis might represent the number of segments in the number. Lower points have 1 segment, middle points 2 and higher points 3. The first axis, on the other hand, tells us what part of the number is wider. Left points correspond to zeros wider on the top, while right points correspond to zeros narrower on the top and wider on the bottom.
+
+## 5. Compare Local MDS, ISOMAP and t-SNE for ZERO digits
+
+We can compare the dimensions obtained with the different nonlinear dimensionality reduction techniques in two ways: graphically and with the local continuity meta criteria.
+
+### a.
+
+First, we will follow a visual approach, comparing dimensions two at a time.
+
+```{r B.5.a}
+colnames(metalmds_conf) <- c("LMDS.1", "LMDS.2")
+colnames(metaisomap_conf) <- c("ISOMAP.1", "ISOMAP.2")
+colnames(tsne.optim.config) <- c("t-SNE.1", "t-SNE.2")
+all.dimensions <- cbind(metalmds_conf, metaisomap_conf, tsne.optim.config)
+pairs(all.dimensions)
+```
+
+Plots comparing the first dimension of two methods follow a straight line, indicating that they are very similar. Specifically, this is the case for LMDS and ISOMAP, while t-SNE seems to have the same meaning in reverse order. Indeed, we interpreted all these dimensions as the width of the zero and t-SNE's was slightly different.
+
+We interpreted the other dimensions as the line thickness or the number of segments, which are less related, as the pair plots confirm.
+
+### b.
+
+The local continuity meta criteria will show us now what method gives more accurate results.
+
+```{r B.5.b}
+best.LC <- c(LMDS = max(LC.LMDS), ISOMAP = max(LC.ISOMAP), tSNE = max(LC.tsne))
+cat("The largest local continuity meta criteria of every method is:\n")
+best.LC
+```
+
+Local MDS and ISOMAP have similar values of the local continuity meta criteria, but t-SNE has by far the largest value (about twice than the others'). Hence, according to this criteria, t-SNE gives the most accurate 2-dimensional configuration of the dataset. That is, its dimensions are the most reliable to interpret.
