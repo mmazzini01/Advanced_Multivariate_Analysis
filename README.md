@@ -19,4 +19,11 @@ Each folder corresponds to a specific topic covered in the course:
 - **`L05_Local Poisson Regression/`** – Poisson regression using local smoothing techniques.  
 - **`L06_Splines/`** – Spline-based regression and smoothing methods.  
 - **`L07_Generalized Additive Models/`** – Extending linear models with smooth functions.  
-- **`L08_Interpretable Machine Learning/`** – Methods for making machine learning models more transparent and explainable.  
+- **`L08_Interpretable Machine Learning/`** – Techniques for model interpretability, including:  
+  - **Shapley Values** – Feature importance based on cooperative game theory.  
+  - **Ghost Variables** – Assessing the importance of features using synthetic variables.  
+  - **Partial Dependence Plots (PDP)** – Visualizing how a feature affects model predictions on average.  
+  - **Local Dependence Plots** – Examining feature interactions at the local level.  
+  - **SHAP Summary & Dependence Plots** – Understanding global and local feature importance.  
+  - **LIME (Local Interpretable Model-agnostic Explanations)** – Explaining individual predictions with local approximations.  
+  - **ICE (Individual Conditional Expectation) Plots** – Analyzing how predictions change for individual instances.   
